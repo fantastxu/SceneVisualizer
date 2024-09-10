@@ -7,7 +7,7 @@
 
 import SwiftUI
 
-extension Color: RawRepresentable {
+extension Color: @retroactive RawRepresentable {
     public typealias RawValue = String
 
     public init?(rawValue: String) {

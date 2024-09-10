@@ -32,7 +32,7 @@ struct MeshAnchorGeometryData: Encodable {
         case originFromAnchorTransform
     }
 
-    func encode(to encoder: Encoder) throws {
+    nonisolated func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(vertices, forKey: .vertices)
         try container.encode(normals, forKey: .normals)
@@ -169,7 +169,7 @@ struct MeshAnchorGeometryData: Encodable {
                 self.updateProximityMaterialProperties(cachedSettings)
             }
 
-            self.meshAnchorGeometries[meshAnchor.id] = await MeshAnchorGeometryData(from: meshAnchor.geometry, transform: meshAnchor.originFromAnchorTransform)
+            self.meshAnchorGeometries[meshAnchor.id] = MeshAnchorGeometryData(from: meshAnchor.geometry, transform: meshAnchor.originFromAnchorTransform)
 
         case .updated:
             guard let pair = self.meshEntities[meshAnchor.id] else {
@@ -187,7 +187,7 @@ struct MeshAnchorGeometryData: Encodable {
             // Collision
 //            pair.primaryEntity.collision?.shapes = [shape]
 
-            self.meshAnchorGeometries[meshAnchor.id] = await MeshAnchorGeometryData(from: meshAnchor.geometry, transform: meshAnchor.originFromAnchorTransform)
+            self.meshAnchorGeometries[meshAnchor.id] = MeshAnchorGeometryData(from: meshAnchor.geometry, transform: meshAnchor.originFromAnchorTransform)
 
         case .removed:
             if let pair = self.meshEntities[meshAnchor.id] {
