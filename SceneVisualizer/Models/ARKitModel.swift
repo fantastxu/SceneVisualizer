@@ -8,6 +8,47 @@
 import RealityKit
 import ARKit
 
+@MainActor
+struct MeshAnchorGeometryData: Encodable {
+    let vertices: [SIMD3<Float>]
+    let normals: [SIMD3<Float>]
+    let faces: [UInt32]
+    let originFromAnchorTransform: simd_float4x4
+
+    init(from geometry: MeshAnchor.Geometry, transform: simd_float4x4) {
+        self.vertices = geometry.vertices.asSIMD3(ofType: Float.self)
+        self.normals = geometry.normals.asSIMD3(ofType: Float.self)
+        self.faces = (0..<geometry.faces.count * 3).map {
+            geometry.faces.buffer.contents()
+                .advanced(by: $0 * geometry.faces.bytesPerIndex)
+                .assumingMemoryBound(to: UInt32.self).pointee
+        }
+        self.originFromAnchorTransform = transform
+    }
+    enum CodingKeys: String, CodingKey {
+        case vertices
+        case normals
+        case faces
+        case originFromAnchorTransform
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(vertices, forKey: .vertices)
+        try container.encode(normals, forKey: .normals)
+        try container.encode(faces, forKey: .faces)
+        
+        // 自定义编码 simd_float4x4
+        let transformArray = [
+            originFromAnchorTransform.columns.0,
+            originFromAnchorTransform.columns.1,
+            originFromAnchorTransform.columns.2,
+            originFromAnchorTransform.columns.3
+        ]
+        try container.encode(transformArray, forKey: .originFromAnchorTransform)
+    }    
+}
+
 @Observable final class ARKitModel {
     private let arSession = ARKitSession()
     private let sceneReconstructionProvider = SceneReconstructionProvider(modes: [.classification])
@@ -16,6 +57,7 @@ import ARKit
 
     private var activeShaderMaterial: Material?
     private var meshEntities: [UUID: OccludedEntityPair] = [:]
+    private var meshAnchorGeometries: [UUID: MeshAnchorGeometryData] = [:]
 
     private var material: Material {
         get {
@@ -127,6 +169,8 @@ import ARKit
                 self.updateProximityMaterialProperties(cachedSettings)
             }
 
+            self.meshAnchorGeometries[meshAnchor.id] = await MeshAnchorGeometryData(from: meshAnchor.geometry, transform: meshAnchor.originFromAnchorTransform)
+
         case .updated:
             guard let pair = self.meshEntities[meshAnchor.id] else {
                 return
@@ -143,6 +187,8 @@ import ARKit
             // Collision
 //            pair.primaryEntity.collision?.shapes = [shape]
 
+            self.meshAnchorGeometries[meshAnchor.id] = await MeshAnchorGeometryData(from: meshAnchor.geometry, transform: meshAnchor.originFromAnchorTransform)
+
         case .removed:
             if let pair = self.meshEntities[meshAnchor.id] {
                 pair.primaryEntity.removeFromParent()
@@ -150,6 +196,7 @@ import ARKit
             }
 
             self.meshEntities.removeValue(forKey: meshAnchor.id)
+            self.meshAnchorGeometries.removeValue(forKey: meshAnchor.id)
         }
     }
 
@@ -189,9 +236,34 @@ import ARKit
 
         return try MeshResource.generate(from: [desc])
     }
+
+    func saveMeshAnchorGeometriesToFile() {
+        DispatchQueue.global(qos: .background).async {
+            let fileManager = FileManager.default
+            let urls = fileManager.urls(for: .documentDirectory, in: .userDomainMask)
+            guard let documentDirectory = urls.first else { return }
+
+            let timestamp = Int(Date().timeIntervalSince1970)
+            let fileURL = documentDirectory.appendingPathComponent("meshAnchorGeometries_\(timestamp).json")
+
+            do {
+                let data = try JSONEncoder().encode(self.meshAnchorGeometries)
+                try data.write(to: fileURL)
+                DispatchQueue.main.async {
+                    print("Mesh anchor geometries saved to \(fileURL)")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    print("Failed to save mesh anchor geometries: \(error)")
+                }
+            }
+        }
+    }    
 }
 
 private struct OccludedEntityPair {
     let primaryEntity: ModelEntity
     let occlusionEntity: ModelEntity
 }
+
+
