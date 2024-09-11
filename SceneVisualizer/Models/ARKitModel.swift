@@ -8,16 +8,28 @@
 import RealityKit
 import ARKit
 
+// Extension to handle NaN values in SIMD3<Float>
+extension SIMD3 where Scalar == Float {
+    func sanitized() -> SIMD3<Float> {
+        return SIMD3<Float>(
+            x.isNaN ? 0.0 : x,
+            y.isNaN ? 0.0 : y,
+            z.isNaN ? 0.0 : z
+        )
+    }
+}
+
 @MainActor
 struct MeshAnchorGeometryData: Encodable {
     let vertices: [SIMD3<Float>]
-    let normals: [SIMD3<Float>]
+    let normals: [SIMD3<Float>]?
     let faces: [UInt32]
     let originFromAnchorTransform: simd_float4x4
 
     init(from geometry: MeshAnchor.Geometry, transform: simd_float4x4) {
         self.vertices = geometry.vertices.asSIMD3(ofType: Float.self)
-        self.normals = geometry.normals.asSIMD3(ofType: Float.self)
+        // Check if normals are available; otherwise, set to nil
+        self.normals = geometry.normals.count > 0 ? geometry.normals.asSIMD3(ofType: Float.self).map { $0.sanitized() } : nil
         self.faces = (0..<geometry.faces.count * 3).map {
             geometry.faces.buffer.contents()
                 .advanced(by: $0 * geometry.faces.bytesPerIndex)
@@ -35,8 +47,15 @@ struct MeshAnchorGeometryData: Encodable {
     nonisolated func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(vertices, forKey: .vertices)
-        try container.encode(normals, forKey: .normals)
-        try container.encode(faces, forKey: .faces)
+        if let normals = normals {
+            try container.encode(normals, forKey: .normals)
+        }
+        
+        // Convert faces to a 2D array where each sub-array contains 3 indices
+        let groupedFaces = stride(from: 0, to: faces.count, by: 3).map {
+            Array(faces[$0..<min($0 + 3, faces.count)])
+        }
+        try container.encode(groupedFaces, forKey: .faces)
         
         // 自定义编码 simd_float4x4
         let transformArray = [
@@ -52,6 +71,10 @@ struct MeshAnchorGeometryData: Encodable {
 @Observable final class ARKitModel {
     private let arSession = ARKitSession()
     private let sceneReconstructionProvider = SceneReconstructionProvider(modes: [.classification])
+    
+    private var isSaving = false  // Flag to indicate when file saving is in progress
+    private let queue = DispatchQueue(label: "com.example.meshUpdateQueue", attributes: .concurrent)
+
 
     let entity = Entity()
 
@@ -137,6 +160,9 @@ struct MeshAnchorGeometryData: Encodable {
 
     @MainActor
     private func processMeshAnchorUpdate(_ update: AnchorUpdate<MeshAnchor>) async {
+
+        guard !self.isSaving else { return }
+        
         let meshAnchor = update.anchor
 
         // Used for collision only, so not used here
@@ -198,6 +224,7 @@ struct MeshAnchorGeometryData: Encodable {
             self.meshEntities.removeValue(forKey: meshAnchor.id)
             self.meshAnchorGeometries.removeValue(forKey: meshAnchor.id)
         }
+
     }
 
     @MainActor
@@ -236,25 +263,53 @@ struct MeshAnchorGeometryData: Encodable {
 
         return try MeshResource.generate(from: [desc])
     }
-
+    
+    @MainActor
     func saveMeshAnchorGeometriesToFile() {
+        self.isSaving = true  // Set flag to true before saving
         DispatchQueue.global(qos: .background).async {
+            
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyyMMdd_HHmmss"
+            let mainFolderName = dateFormatter.string(from: Date())
             let fileManager = FileManager.default
-            let urls = fileManager.urls(for: .documentDirectory, in: .userDomainMask)
-            guard let documentDirectory = urls.first else { return }
+            let documentDirectory = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+            let mainFolderURL = documentDirectory.appendingPathComponent(mainFolderName)
 
             let timestamp = Int(Date().timeIntervalSince1970)
-            let fileURL = documentDirectory.appendingPathComponent("meshAnchorGeometries_\(timestamp).json")
+            let fileURL = mainFolderURL.appendingPathComponent("meshAnchorGeometries_\(timestamp).json")
+            
+            // Ensure the directory exists
+            if !fileManager.fileExists(atPath: mainFolderURL.path) {
+                do {
+                    try fileManager.createDirectory(at: mainFolderURL, withIntermediateDirectories: true, attributes: nil)
+                } catch {
+                    print("Failed to create directory: \(error.localizedDescription)")
+                    self.isSaving = false  // Reset flag on error
+                    return
+                }
+            }
 
             do {
-                let data = try JSONEncoder().encode(self.meshAnchorGeometries)
+                // Convert the dictionary to use String keys
+                let stringKeyedDictionary = self.meshAnchorGeometries.reduce(into: [String: MeshAnchorGeometryData]()) { (result, keyValue) in
+                    let (key, value) = keyValue
+                    result[key.uuidString] = value
+                }
+                
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys] // Adds indentation and sorts keys for readability
+                
+                let data = try encoder.encode(stringKeyedDictionary)
                 try data.write(to: fileURL)
                 DispatchQueue.main.async {
                     print("Mesh anchor geometries saved to \(fileURL)")
+                    self.isSaving = false  // Reset flag after saving
                 }
             } catch {
                 DispatchQueue.main.async {
                     print("Failed to save mesh anchor geometries: \(error)")
+                    self.isSaving = false  // Reset flag on error
                 }
             }
         }

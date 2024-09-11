@@ -27,7 +27,7 @@ struct ImmersiveView: View {
             self.createSettingsAnchor(content: content, attachments: attachments)
         } attachments: {
             Attachment(id: "window") {
-                WristSettingsTriggerView()
+                WristSettingsTriggerView(realityKitModel: self.$realityKitModel)
             }
         }
         .task {
