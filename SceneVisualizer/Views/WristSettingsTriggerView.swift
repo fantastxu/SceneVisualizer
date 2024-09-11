@@ -12,6 +12,7 @@ struct WristSettingsTriggerView: View {
     @Environment(\.dismissWindow) private var dismissWindow
 
     @Binding var realityKitModel: RealityKitModel
+    @State private var isSaving = false
     
     var body: some View {
         VStack(spacing:10) {
@@ -29,12 +30,16 @@ struct WristSettingsTriggerView: View {
             //.frame(width: 200, height: 100)
             
             Button {
+                isSaving = true
                 Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { _ in
-                    realityKitModel.arModel?.saveMeshAnchorGeometriesToFile();
+                    realityKitModel.arModel?.saveMeshAnchorGeometriesToFile(){
+                        isSaving = false
+                    };
                 }
             } label: {
                 Text("Save Meshs")
             }
+            .disabled(isSaving)
             //.frame(width: 200, height: 100)
         }
 

@@ -265,7 +265,8 @@ struct MeshAnchorGeometryData: Encodable {
     }
     
     @MainActor
-    func saveMeshAnchorGeometriesToFile() {
+    func saveMeshAnchorGeometriesToFile(completion: @escaping()->Void) {
+        guard !self.isSaving else { return }
         self.isSaving = true  // Set flag to true before saving
         DispatchQueue.global(qos: .background).async {
             
@@ -286,6 +287,7 @@ struct MeshAnchorGeometryData: Encodable {
                 } catch {
                     print("Failed to create directory: \(error.localizedDescription)")
                     self.isSaving = false  // Reset flag on error
+                    completion()
                     return
                 }
             }
@@ -305,11 +307,13 @@ struct MeshAnchorGeometryData: Encodable {
                 DispatchQueue.main.async {
                     print("Mesh anchor geometries saved to \(fileURL)")
                     self.isSaving = false  // Reset flag after saving
+                    completion()
                 }
             } catch {
                 DispatchQueue.main.async {
                     print("Failed to save mesh anchor geometries: \(error)")
                     self.isSaving = false  // Reset flag on error
+                    completion()
                 }
             }
         }
