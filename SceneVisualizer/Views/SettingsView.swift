@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+@available(visionOS 2.0, *)
 struct SettingsView: View {
     @Environment(\.openImmersiveSpace) private var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
@@ -105,6 +106,10 @@ struct SettingsView: View {
 }
 
 #Preview {
-    SettingsView(id: "main", realityKitModel: .constant(RealityKitModel()))
-        .frame(width: 600, height: 780)
+    if #available(visionOS 2.0, *) {
+        SettingsView(id: "main", realityKitModel: .constant(RealityKitModel()))
+            .frame(width: 600, height: 780)
+    } else {
+        // Fallback on earlier versions
+    }
 }

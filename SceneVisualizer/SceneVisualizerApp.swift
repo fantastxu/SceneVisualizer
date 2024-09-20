@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+@available(visionOS 2.0, *)
 @main
 struct SceneVisualizerApp: App {
     @State private var realityKitModel = RealityKitModel()

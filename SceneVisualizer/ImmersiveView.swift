@@ -8,6 +8,7 @@
 import SwiftUI
 import RealityKit
 
+@available(visionOS 2.0, *)
 struct ImmersiveView: View {
     @Environment(\.dismissWindow) private var dismissWindow
 
@@ -58,5 +59,9 @@ struct ImmersiveView: View {
 }
 
 #Preview(immersionStyle: .mixed) {
-    ImmersiveView(realityKitModel: .constant(RealityKitModel()))
+    if #available(visionOS 2.0, *) {
+        ImmersiveView(realityKitModel: .constant(RealityKitModel()))
+    } else {
+        // Fallback on earlier versions
+    }
 }

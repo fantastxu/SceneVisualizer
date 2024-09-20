@@ -7,7 +7,6 @@
 
 import RealityKit
 import ARKit
-
 // Extension to handle NaN values in SIMD3<Float>
 extension SIMD3 where Scalar == Float {
     func sanitized() -> SIMD3<Float> {
@@ -68,12 +67,49 @@ struct MeshAnchorGeometryData: Encodable {
     }    
 }
 
+struct CameraData{
+    public var timeStamp : String
+    public var transfom : simd_float4x4?
+    public var pixelBuffer : CVPixelBuffer
+    public var extrinsics : simd_float4x4
+    public var intrinsics : simd_float3x3
+    
+    init(timeInterval: TimeInterval, transform: simd_float4x4?,
+         extrinsics: simd_float4x4, intrinsics: simd_float3x3,
+         pixelBuffer: CVPixelBuffer)
+    {
+        self.timeStamp = String(format: "%.9f", timeInterval)
+        self.transfom = transform
+        self.extrinsics = extrinsics
+        self.intrinsics = intrinsics
+        self.pixelBuffer = pixelBuffer
+    }
+    
+    func Save()
+    {
+        
+    }
+}
+
+@available(visionOS 2.0, *)
 @Observable final class ARKitModel {
     private let arSession = ARKitSession()
     private let sceneReconstructionProvider = SceneReconstructionProvider(modes: [.classification])
+    private let worldTrackingProvider = WorldTrackingProvider()
+    private let cameraFrameProvider = CameraFrameProvider()
+    
+    private var cameraDataCache : [CameraData] = []
     
     private var isSaving = false  // Flag to indicate when file saving is in progress
-    private let queue = DispatchQueue(label: "com.example.meshUpdateQueue", attributes: .concurrent)
+    private let queue = DispatchQueue(label: "com.innopeak.SceneVisualizer.meshUpdateQueue", attributes: .concurrent)
+    private let formats = CameraVideoFormat.supportedVideoFormats(for: .main, cameraPositions:[.left])
+    private var pixelBuffer: CVPixelBuffer? = nil
+    
+    private var lastTimeStamp : TimeInterval = -1.0
+    public var fps : Float = 10 {didSet{}}
+    
+    private let cameraDataQueue = DispatchQueue(label: "com.innopeak.SceneVisualizer.cameraDataQueue")
+
 
 
     let entity = Entity()
@@ -100,12 +136,13 @@ struct MeshAnchorGeometryData: Encodable {
 
     private var cachedSettings: RealityKitModel?
 
-    func start(_ model: RealityKitModel) async {
+
+    func start3DMesh(_ model: RealityKitModel) async {
         guard SceneReconstructionProvider.isSupported else {
             print("SceneReconstructionProvider not supported.")
             return
         }
-
+        
         do {
             self.activeShaderMaterial = try await ShaderGraphMaterial(named: "/Root/ProximityMaterial", from: "Materials")
         } catch {
@@ -113,11 +150,10 @@ struct MeshAnchorGeometryData: Encodable {
         }
 
         do {
-            try await self.arSession.run([self.sceneReconstructionProvider])
-            print("Started ARKit")
 
             self.updateProximityMaterialProperties(model)
 
+            //get 3d mesh
             for await update in self.sceneReconstructionProvider.anchorUpdates {
                 if Task.isCancelled {
                     print("Quit ARKit task")
@@ -127,6 +163,57 @@ struct MeshAnchorGeometryData: Encodable {
 //                print("Anchor update: \(update)")
                 await processMeshAnchorUpdate(update)
             }
+            
+        }
+    }
+    
+    func startCameraData(_ model: RealityKitModel) async {
+        
+        await arSession.queryAuthorization(for: [.cameraAccess])
+
+        do {
+            guard let cameraFrameUpdates =
+                cameraFrameProvider.cameraFrameUpdates(for: formats[0]) else {
+                return
+            }
+            //get RGB buffer
+            for await cameraFrame in cameraFrameUpdates{
+                guard let mainCameraSample = cameraFrame.sample(for: .left) else {
+                     continue
+                 }
+                 
+                if(self.lastTimeStamp >= 0.0 && mainCameraSample.parameters.captureTimestamp - self.lastTimeStamp > Double(1 / self.fps))
+                {
+                    let newdata = CameraData(timeInterval: mainCameraSample.parameters.captureTimestamp,
+                                             transform: getDevicePose(timeStamp: mainCameraSample.parameters.captureTimestamp),
+                                             extrinsics: mainCameraSample.parameters.extrinsics,
+                                             intrinsics: mainCameraSample.parameters.intrinsics,
+                                             pixelBuffer: mainCameraSample.pixelBuffer)
+                    
+                    cameraDataQueue.async {
+                        self.cameraDataCache.append(newdata)
+                    }
+                }
+                
+            }
+        }
+    }
+    
+    func start(_ model: RealityKitModel) async {
+
+        do {
+            try await self.arSession.run([self.sceneReconstructionProvider, self.worldTrackingProvider, self.cameraFrameProvider])
+            print("Started ARKit")
+            
+            Task{
+                await start3DMesh(model)
+            }
+            
+            Task{
+                await startCameraData(model)
+            }
+
+
         } catch {
             print("ARKit error \(error)")
         }
@@ -270,20 +357,14 @@ struct MeshAnchorGeometryData: Encodable {
         self.isSaving = true  // Set flag to true before saving
         DispatchQueue.global(qos: .background).async {
             
-            let dateFormatter = DateFormatter()
-            dateFormatter.dateFormat = "yyyyMMdd_HHmmss"
-            let mainFolderName = dateFormatter.string(from: Date())
-            let fileManager = FileManager.default
-            let documentDirectory = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
-            let mainFolderURL = documentDirectory.appendingPathComponent(mainFolderName)
-
             let timestamp = Int(Date().timeIntervalSince1970)
+            let mainFolderURL = self.getCurrentTimeDirectory()
             let fileURL = mainFolderURL.appendingPathComponent("meshAnchorGeometries_\(timestamp).json")
             
             // Ensure the directory exists
-            if !fileManager.fileExists(atPath: mainFolderURL.path) {
+            if !FileManager.default.fileExists(atPath: mainFolderURL.path) {
                 do {
-                    try fileManager.createDirectory(at: mainFolderURL, withIntermediateDirectories: true, attributes: nil)
+                    try FileManager.default.createDirectory(at: mainFolderURL, withIntermediateDirectories: true, attributes: nil)
                 } catch {
                     print("Failed to create directory: \(error.localizedDescription)")
                     self.isSaving = false  // Reset flag on error
@@ -317,7 +398,74 @@ struct MeshAnchorGeometryData: Encodable {
                 }
             }
         }
-    }    
+    }
+    
+    func getDevicePose(timeStamp:TimeInterval) -> simd_float4x4?
+    {
+        guard let pose = worldTrackingProvider.queryDeviceAnchor(atTimestamp: timeStamp) else {
+            return nil
+        }
+        
+        return pose.originFromAnchorTransform
+        
+    }
+    
+    // Helper function to convert matrix to string
+    private func matrixToArray(_ matrix: simd_float4x4) -> String {
+        // 将矩阵的元素格式化为字符串
+        var matrixString = ""
+        for row in 0..<4 {
+            for col in 0..<4 {
+                matrixString += "\(matrix[row, col])"
+                if col < 3 {
+                    matrixString += ", "
+                }
+            }
+            matrixString += "\n"
+        }
+        
+        return matrixString
+    }
+    
+    private func matrixToArray(_ matrix: simd_float3x3) -> String {
+        // 将矩阵的元素格式化为字符串
+        var matrixString = ""
+        for row in 0..<3 {
+            for col in 0..<3 {
+                matrixString += "\(matrix[row, col])"
+                if col < 2 {
+                    matrixString += ", "
+                }
+            }
+            matrixString += "\n"
+        }
+        
+        return matrixString
+    }
+    
+    // Convert CVPixelBuffer to Data
+    private func pixelBufferToData(pixelBuffer: CVPixelBuffer) -> Data {
+        CVPixelBufferLockBaseAddress(pixelBuffer, CVPixelBufferLockFlags.readOnly)
+        let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer)
+        let dataSize = CVPixelBufferGetDataSize(pixelBuffer)
+        let data = Data(bytes: baseAddress!, count: dataSize)
+        CVPixelBufferUnlockBaseAddress(pixelBuffer, CVPixelBufferLockFlags.readOnly)
+        return data
+    }
+    
+    // Helper function to get documents directory
+    private func getDocumentsDirectory() -> URL {
+        return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+    }
+    
+    private func getCurrentTimeDirectory() -> URL {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyyMMdd_HHmmss"
+        let mainFolderName = dateFormatter.string(from: Date())
+        return getDocumentsDirectory().appendingPathComponent(mainFolderName)
+    }
+    
+    
 }
 
 private struct OccludedEntityPair {

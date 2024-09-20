@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+@available(visionOS 2.0, *)
 struct WristSettingsTriggerView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
@@ -47,5 +48,9 @@ struct WristSettingsTriggerView: View {
 }
 
 #Preview {
-    WristSettingsTriggerView(realityKitModel: .constant(RealityKitModel()))
+    if #available(visionOS 2.0, *) {
+        WristSettingsTriggerView(realityKitModel: .constant(RealityKitModel()))
+    } else {
+        // Fallback on earlier versions
+    }
 }

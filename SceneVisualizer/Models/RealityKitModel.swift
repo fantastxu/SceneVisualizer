@@ -7,6 +7,7 @@
 
 import SwiftUI
 
+@available(visionOS 2.0, *)
 @Observable class RealityKitModel {
     weak var arModel: ARKitModel?
 
