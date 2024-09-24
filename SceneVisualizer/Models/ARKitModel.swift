@@ -106,7 +106,30 @@ struct CameraData{
     private var pixelBuffer: CVPixelBuffer? = nil
     
     private var lastTimeStamp : TimeInterval = -1.0
+    private var currentURL : URL? = nil
     public var fps : Float = 10 {didSet{}}
+    
+    public var folderName : String = "" {didSet{
+        //create new folder for new data saving
+        if folderName.isEmpty {
+            //stop recording
+            self.lastTimeStamp = -1.0
+        }
+        else {
+            //start recording camera pose and camera rgb frames.
+            //create sub-folder first
+            currentURL = getDocumentsDirectory().appendingPathComponent(folderName)
+            do {
+                try FileManager.default.createDirectory(at: currentURL, withIntermediateDirectories: true, attributes: nil)
+                print("data save directory created at \(currentURL.path)")
+            } catch {
+                print("Error creating data directory: \(error)")
+            }
+            
+            //set timestamp
+            self.lastTimeStamp = Date().timeIntervalSince1970
+        }
+    }}
     
     private let cameraDataQueue = DispatchQueue(label: "com.innopeak.SceneVisualizer.cameraDataQueue")
 

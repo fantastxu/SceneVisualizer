@@ -18,12 +18,24 @@ struct SettingsView: View {
     let id: String?
 
     @Binding var realityKitModel: RealityKitModel
-
+    
     var body: some View {
         NavigationStack {
             VStack {
                 Button {
                     self.changeImmersiveState(!self.realityKitModel.immersiveSpaceIsShown)
+                    
+                    if self.realityKitModel.immersiveSpaceIsShown
+                    {
+                        let dateFormatter = DateFormatter()
+                        dateFormatter.dateFormat = "yyyyMMdd_HHmmss"
+                        let mainFolderName = dateFormatter.string(from: Date())
+                        
+                        self.realityKitModel.arModel?.folderName = mainFolderName
+                    }
+                    else{
+                        self.realityKitModel.arModel?.folderName = ""
+                    }
                 } label: {
                     Text(self.realityKitModel.immersiveSpaceIsShown ? "Leave Space" : "Enter Space")
                         .padding()
@@ -80,6 +92,18 @@ struct SettingsView: View {
                 }
 
                 Spacer()
+                Section(header: Text("FPS")) {
+                    Slider(value: Binding(
+                        get: {
+                            Double(realityKitModel.arModel!.fps)
+                        },
+                        set: { newValue in
+                            realityKitModel.arModel!.fps = Float(newValue)
+                        }
+                    ), in: 5...30, step: 5)
+                    .disabled(self.realityKitModel.immersiveSpaceIsShown) // Disable when immersive space is shown
+                    Text("FPS: \(realityKitModel.arModel!.fps)")
+                }
             }
             .padding()
             .navigationTitle("SceneVisualizer")
